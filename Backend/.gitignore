@@ -1,0 +1,21 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+# The operator's insert script for the administrator rows. Kept out of the tree: it holds live password hashes.
+manual-accounts.sql
+distribute.md
+Instruction.md
+Readme.md
+src/modules/admin
+src/modules/inquiries
+src/modules/listings
+src/modules/moderation
+src/modules/notifications
+src/modules/reports
+src/modules/users
+test
