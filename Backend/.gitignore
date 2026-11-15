@@ -19,3 +19,4 @@ src/modules/notifications
 src/modules/reports
 src/modules/users
 test
+.DS_Store
