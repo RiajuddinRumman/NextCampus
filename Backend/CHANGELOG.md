@@ -13,6 +13,210 @@ belongs here instead.
 
 ---
 
+## 2026-11-16 — a suspension that reaches the listings, and six smaller things
+
+Seven findings from the same kind of read: what happens when two people press the
+same button, when the punished account still has posts on display, and when a
+number that exists in one DTO does not exist in the route that writes the same
+column. One of them is a security hole in the ordinary sense — a suspended scammer
+whose "iPhone for sale" stayed in the search results — and the rest are five to
+fifteen lines each.
+
+### Suspending an account now takes its public half with it
+
+- **`POST /api/moderation/users/{id}/suspend`** (admin) used to write one row on
+  `users` and delete the `sessions`. Everything the account had posted stayed
+  `ACTIVE` in the catalogue, and the students who had already written to it stayed
+  `PENDING` in a thread nobody could answer again, because the owner could no
+  longer sign in. In the same transaction it now sets that owner's `ACTIVE`
+  listings to `HIDDEN` and settles the `PENDING` inquiries inside them with one
+  `INQUIRY_DECLINED` each, saying `The account behind this listing was suspended.`
+  — the same words in the thread and in the notification.
+- The settle is `ListingsService.settlePendingInquiries()`, the call a close
+  already made, with the response text now passed in so a suspension does not
+  claim the listing was withdrawn by its owner. `ModerationModule` already
+  imported `ListingsModule` for `listHidden()`, so the direction stayed one-way
+  and no cycle appeared.
+- `restoreUser()` deliberately leaves the listings hidden. Un-hiding is a decision
+  of its own — staff, one listing at a time — so a suspension that turns out to
+  have been wrong costs the student a conversation, not a scam back in the search
+  results. Closed listings are not touched by any of this, and the hide is
+  conditional on the status that was read, so a moderator's hide a moment earlier
+  is not rewritten.
+- No per-listing notification goes to the suspended owner: the suspension letter
+  already says what happened to the account, and the audit trail has one
+  `SUSPEND_ACCOUNT` row rather than one per post.
+
+### Two ways a role rule was applied in one place and not another
+
+- **`POST /api/moderation/users/{id}/warn`** never looked at the target's role, so
+  a MODERATOR could send an ADMIN an "Official warning" while suspending the same
+  account was refused. It now answers `403 PROTECTED_ACCOUNT` — the code
+  suspension already uses, not the admin module's `ADMIN_PROTECTED` — before the
+  audit row and before the notification. An ADMIN warning an ADMIN is still
+  allowed; nobody is above the trail.
+- **`POST /api/users/{id}/block`** read the table for an existing block and then
+  inserted. A double-click passed the read twice, the unique index stopped the
+  second insert, and that request answered `500`. The insert is now wrapped the
+  way `create()` and `completeRegistration()` wrap theirs: `isDuplicateKey(error)`
+  becomes the same `409 ALREADY_BLOCKED` the read gives.
+
+### Two numbers that were not in the place that needed them
+
+- `MailCooldown` filtered the stale timestamps out of the entry it was using and
+  wrote the rest back, which shrinks nothing: the key stayed in the map holding an
+  empty array for the life of the process, one per address anybody ever typed into
+  a sign-up form, so the bot minting addresses was growing the memory of the very
+  gate meant to slow it down. `pruneCooldown()` now deletes the keys whose hour has
+  passed, run from `take()` once an hour of traffic rather than once a request, and
+  `refund()` drops the key when the refunded claim was the only one.
+- **`PATCH /api/admin/users/{id}/profile`** has no body DTO on purpose — the route
+  answers `NO_FIELDS` where a DTO with `forbidNonWhitelisted` would answer
+  `VALIDATION_FAILED`, and that distinction is documented on the controller — but
+  it checked nothing about length, and the `users` columns are `text`, so a
+  five-thousand-character name was accepted and stored. `MAX_NAME_LENGTH` and
+  `MAX_DEPARTMENT_LENGTH` now live beside `UpdateProfileDto`, which uses them in
+  its own decorators, and the admin route refuses an over-long value with
+  `400 FIELD_TOO_LONG` before writing anything, including the legal field beside
+  it in the same body.
+
+### One body the validation pipe never saw
+
+`PATCH /api/reports/{id}/resolve` and `/dismiss` took `{ note?: string }` inline and
+checked it with a hand-written helper. The shape is now `ReportNoteDto`
+(`@IsOptional() @IsString() @MaxLength(2000)`), so the pipe answers a non-string or
+an over-long note as `400 VALIDATION_FAILED` with `details[].path` = `note` — **the
+code for a too-long note changes from `NOTE_REQUIRED` to `VALIDATION_FAILED`**, the
+one client-visible difference in this batch. That a closing note is *required* at
+all is a rule about the audit trail rather than about the field, so the 5-character
+floor keeps `NOTE_REQUIRED` and its own message.
+
+### A reply that no longer lands in a closed thread
+
+`messageInquirer()` checked the status and then wrote by id alone — the one inquiry
+write in the file that did not carry the status it had read. An owner replying in
+one tab while the thread was settled in another left a message inside a `DECLINED`
+or `CANCELLED` inquiry and told the inquirer about it. The write is conditional now,
+and `affected === 0` answers `400 INVALID_TRANSITION` before the notification. Which
+of the two requests wins is the database's decision, so the new unit test decides it
+there rather than racing two HTTP calls that could legitimately arrive one after the
+other.
+
+### Docs
+
+`README.md` §10 counts, §12 (`FIELD_TOO_LONG`, `PROTECTED_ACCOUNT` for a staff
+action, the `NOTE_REQUIRED` row), the role rules in §7.3 and the closing-note
+paragraph in §6; `Instruction.md` §5 rows for suspension, warn, profile correction
+and the closing-note ceiling — plus two wrong status codes in the users table
+(`ALREADY_BLOCKED` is `409`, `NOT_BLOCKED` is `404`); `distribute.md` §B and the
+count lines; `test/README.md` counts.
+
+### Tests
+
+- e2e: 104 → 106. A suspension hides the posts and settles the threads (search
+  empty for an anonymous caller, the listing in the staff hidden queue, the
+  declined `ownerResponse` and cleared `pendingKey`, one notification, and the
+  listing still hidden after the restore); a moderator cannot warn an admin, and
+  nothing is written when it is refused; the block double-click answers `201` and
+  `409`; the admin's 121-character name is refused with the row untouched; the
+  too-long closing note now expects `VALIDATION_FAILED`.
+- unit: 69 → 76. Three for the reply that loses the thread — the `where` it writes
+  with, the refusal before the notification, and the empty-reply rule that was
+  already there — and four for the cooldown: the sweep's rule, the answers it must
+  not change, the 50 addresses that become 1, and the refunded claim that leaves no
+  key behind.
+
+Nothing here changes a route, a response shape or an existing error `code`, except
+the too-long closing note named above.
+
+---
+
+## 2026-11-16 — the searches a student actually asks for, and a close that answers the queue
+
+Five gaps found by reading the flows as a person who has to use them: the tutor,
+commuter and group searches could not be filtered at all, a listing could be
+closed while students were still waiting on it, and a block stopped working the
+moment the search box was involved. Nothing here adds a route, changes a response
+shape or renames an error `code`; four of the five add something a client may
+send, and the fifth changes what two existing routes do.
+
+### New query parameters on `GET /api/listings`
+
+- **`?listingType=OFFER|REQUEST`** matches `data.listingType`, which is the same
+  field name in TUITION and in COMMUTE — so one filter now answers "who is
+  offering tuition" and "who needs a lift", case-insensitively (`?listingType=offer`
+  is the same request). Anything outside the two words is `400 VALIDATION_FAILED`
+  naming `listingType`.
+- **`?fromArea=` and `?toArea=`** match the two ends of a commute route as text,
+  the way `?location` matches the listing's own location: `?fromArea=mirp` finds
+  "Mirpur 10". The value goes through `likePattern()`, so a `%` or `_` typed by a
+  student is an honest character rather than a wildcard, and the parameter is
+  capped at 120 characters, which is what the posting DTO allows.
+- **`?day=SUN`** is membership of a commute post's `days` array, the same
+  `jsonb_exists` the `?subject=` filter has always used, and it is case-insensitive
+  too. `?day=SUNNY` is `400 VALIDATION_FAILED`.
+- **`?skill=` and `?roleNeeded=`** are membership of a group post's `requiredSkills`
+  and `rolesNeeded`, exact like `?subject=` and capped at 60 characters. A skill
+  nobody has listed yet is an empty page with `meta.total: 0`, not an error.
+- **`GET /api/listings/facets/{category}`** answers with the values those filters
+  can take: `listingTypes`, `fromAreas`, `toAreas`, `days`, `skills` and
+  `rolesNeeded` join the lists it already returned, each derived from the newest
+  1000 active posts of that category.
+
+### Closing a listing now settles the threads inside it
+
+- **`PATCH /api/listings/{id}/status?status=CLOSED` and `POST
+  /api/listings/{id}/resolve`** used to leave every `PENDING` inquiry on the
+  listing waiting forever: the post was closed, a new inquiry on it was refused as
+  `LISTING_NOT_ACTIVE`, and the student who had already asked had no `pendingKey`
+  released and no answer. Both routes now decline those threads in the same
+  transaction as the close — `DECLINED`, `ownerResponse` "This listing was closed.",
+  `pendingKey` cleared, and one `INQUIRY_DECLINED` notification per affected
+  student. `ACCEPTED` threads are left alone: two students who already exchanged
+  contacts are having a conversation, and ending it is a decision rather than a
+  side effect. Reopening the listing revives nothing, and a second close declines
+  nobody twice. The writes are conditional on the status just read, the way
+  `InquiriesService.applyDecision()` writes, so an owner answering one of those
+  threads in another tab and the close cannot both settle it.
+- This needed no new module dependency and no schema change: `ListingsService`
+  writes the `inquiries` and `notifications` rows through the transaction's own
+  `EntityManager`, the same way `ModerationService` has always written the bell
+  that belongs to a hide.
+
+### Two places where a block or a report was not what it looked like
+
+- **`GET /api/listings` for a signed-in caller no longer returns the posts of a
+  student they have blocked, or of one who blocked them.** The clause is a
+  `NOT EXISTS` inside the search statement rather than a filter applied to the
+  page afterwards, so `meta.total` counts what is actually shown. An anonymous
+  search is unchanged, and `GET /api/listings/{id}` keeps its limited
+  `blocked: true` view — a student with a link to a post still reaches the page,
+  without the owner's identity or any way to contact them.
+- **`POST /api/reports` with `targetType: "LISTING"` on your own listing is `400
+  SELF_REPORT`**, the answer the `USER` target has always given. It used to file:
+  the report reached a moderator's queue, and the queue row names both the
+  reporter and the listing's owner, so the report was never the anonymous tip it
+  looked like to whoever sent it.
+
+### Docs
+
+- `README.md` §7.5 gained the filter semantics and the facet keys, and §7.4's
+  parameter list is now the whole list. `Instruction.md` §5.C and §5.D gained the
+  rows above, and its "Closed twice" row was wrong: it promised `400
+  ALREADY_CLOSED` for a second close, a `code` this route has never had (`409
+  ALREADY_CLOSED` belongs to the report queue). A second close is `200`, which is
+  what the new inquiry-settlement test also pins down.
+
+### Tests
+
+69 unit in 10 suites and 104 e2e in 11, all green — five new e2e rows, each proven
+to fail without the change it covers: the three new filter searches answered `400
+VALIDATION_FAILED`, the facet lists were absent, a self-listing report answered
+`201`, a blocked pair still saw each other's posts, and both close routes left
+`PENDING` rows behind with no notification.
+
+---
+
 ## 2026-11-15, night — seven audit findings
 
 Findings from an outside read of the tree, each fixed in the shape the file

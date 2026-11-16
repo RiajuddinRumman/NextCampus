@@ -45,10 +45,16 @@ export function maySendMail(sentAt: readonly number[], now: number): boolean {
  * count their own - the same trade-off the throttler's default storage makes, and
  * the same one to revisit with a shared store if this API ever runs on more than
  * one process.
+ *
+ * The map is also the only thing in this file that grows with traffic and never
+ * on its own, so forgetting is part of the design: see `pruneCooldown()`.
  */
 @Injectable()
 export class MailCooldown {
   private readonly sentAt = new Map<string, number[]>();
+
+  /** The moment the stale keys were last swept, so the sweep is not per request. */
+  private lastSweep = 0;
 
   /**
    * Claim the next slot for `key` (`<purpose>:<address>`, the same shape a
@@ -59,6 +65,14 @@ export class MailCooldown {
    * answer was no.
    */
   take(key: string, now = Date.now()): boolean {
+    // Once an hour of traffic, not once a request: an entry this sweep drops
+    // belongs to an address that is not being written to, so nobody is waiting
+    // on the answer for it, and a bot that mints addresses is the only caller
+    // who ever makes the map big enough for the walk to cost anything.
+    if (now - this.lastSweep >= HOUR_MS) {
+      this.lastSweep = now;
+      pruneCooldown(this.sentAt, now);
+    }
     const history = (this.sentAt.get(key) ?? []).filter((at) => now - at < HOUR_MS);
     if (!maySendMail(history, now)) {
       this.sentAt.set(key, history);
@@ -81,7 +95,35 @@ export class MailCooldown {
   refund(key: string, now = Date.now()): void {
     const history = (this.sentAt.get(key) ?? []).filter((at) => now - at < HOUR_MS);
     history.pop();
-    this.sentAt.set(key, history);
+    // A refunded send leaves nothing behind, and "nothing behind" means the key
+    // goes too — the empty array under a hundred thousand addresses is exactly
+    // the memory this class is asked not to keep.
+    if (history.length) {
+      this.sentAt.set(key, history);
+    } else {
+      this.sentAt.delete(key);
+    }
+  }
+}
+
+/**
+ * The keys the record may forget: every timestamp in the entry is older than the
+ * hour, so the entry can no longer change an answer.
+ *
+ * `take()` has always filtered the stale timestamps out of the entry it is using,
+ * which shrinks nothing — the key stays in the map holding an empty array for as
+ * long as the process lives, and an address only needs to be typed into a
+ * sign-up form once to earn its place there. Deleting the keys is what makes the
+ * map bounded by the addresses being mailed rather than by everyone who ever was.
+ */
+export function pruneCooldown(sentAt: Map<string, number[]>, now: number): void {
+  for (const [key, history] of sentAt) {
+    const fresh = history.filter((at) => now - at < HOUR_MS);
+    if (fresh.length) {
+      sentAt.set(key, fresh);
+    } else {
+      sentAt.delete(key);
+    }
   }
 }
 
