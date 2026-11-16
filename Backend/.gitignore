@@ -18,3 +18,4 @@ test
 .DS_Store
 CHANGELOG.md
 README.md
+.gitignore
