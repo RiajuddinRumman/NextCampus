@@ -12,7 +12,6 @@ src/modules/inquiries
 src/modules/listings
 src/modules/mail
 src/modules/media
-src/modules/moderation
 src/modules/notifications
 src/modules/reports
 src/modules/users
