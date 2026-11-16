@@ -1,19 +1,5 @@
 import { randomBytes } from 'node:crypto';
 
-/**
- * The value sets the columns store, and the primary key every new row is given.
- *
- * Each set is listed in `migrations/1794500000000-InitialSchema.ts` with the same
- * members and the same spelling. A Postgres enum column accepts only the labels
- * that existed when its type was created, so a value added here and not there is an
- * insert error, and a member removed here still exists in the database.
- *
- * A frozen object plus a type of the same name, rather than a TypeScript `enum`, so
- * the plain string a query parameter or a JSON body already holds is assignable to
- * `Role` with no cast — and so a renamed member breaks `dto.role !== 'ADMIN'` at
- * compile time instead of quietly never matching.
- */
-
 export const Role = {
   USER: 'USER',
   MODERATOR: 'MODERATOR',
@@ -92,11 +78,6 @@ export const ModerationActionType = {
 } as const;
 export type ModerationActionType = (typeof ModerationActionType)[keyof typeof ModerationActionType];
 
-/**
- * `TEXT` primary keys, in the shape `c` + the time in base36 + 16 random hex:
- * sortable by age and not guessable. The database gives no default for those
- * columns, which is also what lets an id exist before its row is inserted.
- */
 export function newId(): string {
   return `c${Date.now().toString(36)}${randomBytes(8).toString('hex')}`;
 }

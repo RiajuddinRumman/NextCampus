@@ -1,36 +1,5 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-/**
- * The whole schema, in the shape the application currently reads.
- *
- * Three things are worth knowing before reading it:
- *
- * 1. Table names are snake_case (`listing_images`), column names are
- *    camelCase ("emailVerified"), and both are quoted. That is what the
- *    previous tooling produced, and keeping it means a row written before this
- *    file existed is still readable by the entity that maps it. A rename would
- *    have been cleaner to look at and worse for the person who has to reconcile
- *    it with live data.
- *
- * 2. Every timestamp is `timestamptz`, never `timestamp`: an offset-less column
- *    is filled in using the session's own zone and read back as if it were UTC,
- *    so a `now()` comparison against an indexed column becomes a quiet six-hour
- *    bug (see the `ConvertTimestampsToUtc` entry in CHANGELOG). No column here is
- *    anything else.
- *
- * 3. Three things here are not derivable from the entities: the trigram indexes
- *    on listing title and description (they need `USING gin` and an extension),
- *    the unique index that lets only one PENDING inquiry exist per listing, and
- *    the two partial indexes that hold one open report per student and target.
- *    All of them are here, and only here.
- *
- * The class name is part of the contract, not a label. TypeORM decides what
- * still has to run by matching this name against the rows in its own
- * `migrations` table, so renaming the class would make every existing database
- * execute this file again — starting with a `CREATE TABLE "users"` that has
- * nowhere to go. It is also why folding the open-report indexes in here left any
- * existing database needing them by hand: README §9.3.
- */
 export class InitialSchema1794500000000 implements MigrationInterface {
   name = 'InitialSchema1794500000000';
 
@@ -241,11 +210,6 @@ export class InitialSchema1794500000000 implements MigrationInterface {
     `);
   }
 
-  /**
-   * Reverse of `up`, in the opposite order. A migration that cannot be
-   * undone is a migration you are afraid to run, and being afraid of the
-   * database is not something a beginner should have to live with.
-   */
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`
       ALTER TABLE "moderation_actions" DROP CONSTRAINT "moderation_actions_reportId_fkey";

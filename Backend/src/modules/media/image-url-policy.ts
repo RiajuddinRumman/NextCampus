@@ -3,20 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import type { ValidationIssue } from '../../common/validators/validation-errors';
 import { imageUrlBase, isOwnImageUrl } from './image-url';
 
-/**
- * Turns the URL shape in `./image-url` into the answer every other validation
- * failure in this API already gives: `400 VALIDATION_FAILED`, one `details`
- * entry naming the field.
- *
- * That is a deliberate choice over a dedicated code like `IMAGE_URL_NOT_ALLOWED`.
- * A client that highlights `details[].path` — which is what every form against
- * this API does for a mistyped price or a too-short title — needs no new branch
- * for a link it should not have sent, and the route's contract does not change.
- *
- * The check lives here rather than on the DTOs because it needs two things a DTO
- * does not have: the configured base, and the id of the account making the call,
- * which is what says whose Cloudinary folder a listing may read from.
- */
 @Injectable()
 export class ImageUrlPolicy {
   private readonly base: string | null;
@@ -30,12 +16,7 @@ export class ImageUrlPolicy {
     this.folder = config.get<string>('CLOUDINARY_UPLOAD_FOLDER', 'student-platform');
   }
 
-  /**
-   * Every image a listing points at, each from the caller's own uploads.
-   *
-   * `MediaService` stores under `<folder>/<userId>/`, so a student who has read
-   * somebody else's public URL still cannot attach it to their own listing.
-   */
+  // An image belongs to this request only if the host is the configured CDN base and the path sits inside the uploader's own folder.
   assertListingImages(urls: readonly string[], ownerId: string): void {
     if (!urls.length) return;
     this.refuse(
@@ -44,21 +25,10 @@ export class ImageUrlPolicy {
     );
   }
 
-  /** A profile picture: our own delivery URL, with no folder rule to add. */
   assertProfileImage(url: string): void {
     this.refuse([[url, 'image'] as const], undefined);
   }
 
-  /**
-   * One pass over the links, one error that lists every offender: a body with
-   * two foreign URLs is two findings for whoever reads the response, not two
-   * round trips.
-   *
-   * A process with no Cloudinary base configured refuses every link, because the
-   * only route that could have produced a valid one is disabled in the same
-   * process — accepting a URL nobody uploaded would be the finding again,
-   * dressed up as a working deployment.
-   */
   private refuse(
     entries: readonly (readonly [string, string])[],
     uploaderFolder: string | undefined,
@@ -95,7 +65,6 @@ export class ImageUrlPolicy {
   }
 }
 
-/** The offending text is worth quoting, but not worth an unbounded error body. */
 function shorten(url: string): string {
   return url.length > 120 ? `${url.slice(0, 120)}…` : url;
 }

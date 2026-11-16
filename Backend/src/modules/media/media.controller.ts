@@ -18,23 +18,6 @@ const uploadInterceptor = FileFieldsInterceptor([{ name: 'images', maxCount: MAX
   limits: { fileSize: MAX_BYTES, files: MAX_FILES },
 });
 
-/**
- * Bytes in, URLs out — the only non-JSON route in the API.
- *
- * `@VerifiedStudent()` is required because images are stored under a folder
- * named after `user.id`: an anonymous uploader would be handed disk space in
- * someone else's namespace. `memoryStorage` means each file reaches Cloudinary
- * from RAM and never sits on this server's disk.
- *
- * `MAX_FILES` and `MAX_BYTES` are imported from `media.service.ts` rather than
- * rewritten here: multer applies the product before the handler runs, and the
- * service repeats the size check for a caller that set its own headers, while
- * the count stays the interceptor's alone.
- *
- * The response is `{ images: [{ url, publicId, width, height, bytes }] }`. Only
- * `url` goes back into `POST /api/listings`; `publicId` is the handle a delete
- * route would need, and this API has no delete route yet.
- */
 @ApiTags('media')
 @VerifiedStudent()
 @Controller('media')
