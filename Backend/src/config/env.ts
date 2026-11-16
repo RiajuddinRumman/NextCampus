@@ -9,8 +9,10 @@
  * and much less clearly than one that refuses to start.
  *
  * Optional integrations (SMTP, Cloudinary) are intentionally allowed to be
- * empty. Their services degrade: mail links are logged instead of sent, and
- * uploads answer 503.
+ * empty outside production. Their services degrade: mail links are logged
+ * instead of sent, and uploads answer 503. A production process is the
+ * exception for mail — see the `SMTP_HOST` check in `loadEnv` — because a logged
+ * reset link is a key to an account, and Cloudinary has no such property.
  *
  * One thing below is not an environment setting at all: the institution rule, at
  * the foot of the file. It decides who may hold an account, so it moves by commit
@@ -153,12 +155,25 @@ export function loadEnv(raw: Record<string, unknown>): Env {
     problems.push(`APP_BASE_URL: expected an http(s) URL, got "${appBaseUrl}"`);
   }
 
-  // Optional, and validated only when present: an empty value means "there is no
-  // front end to point at yet", which is true of this repository on its own and
-  // is not a mistake to refuse to boot over.
+  // Optional outside production, and validated only when present: an empty value
+  // means "there is no front end to point at yet", which is true of this
+  // repository on its own and is not a mistake to refuse to boot over.
   const frontendUrl = text(raw, 'FRONTEND_URL');
   if (frontendUrl && !isUrl(frontendUrl)) {
     problems.push(`FRONTEND_URL: expected an http(s) URL, got "${frontendUrl}"`);
+  }
+
+  // The one optional integration that is not optional in production. Without a
+  // mail server `MailerService` writes every message to stdout instead of
+  // sending it, which is what makes a registration link readable during
+  // development — and in production it puts a live password-reset link in the
+  // host's log, where anyone who can read that log can take over the account
+  // that asked for it, while the student never receives anything. A deploy that
+  // forgot the setting must fail here, where somebody is watching the start-up,
+  // rather than work.
+  const smtpHost = text(raw, 'SMTP_HOST')?.trim() ?? '';
+  if (nodeEnv === 'production' && !smtpHost) {
+    problems.push('SMTP_HOST: required in production, so reset links are mailed rather than logged');
   }
 
   if (problems.length) {
@@ -173,7 +188,10 @@ export function loadEnv(raw: Record<string, unknown>): Env {
     FRONTEND_URL: frontendUrl,
     DATABASE_URL: databaseUrl,
     JWT_SECRET: jwtSecret,
-    SMTP_HOST: text(raw, 'SMTP_HOST'),
+    // The trimmed value, and `undefined` when blank: `MailerService` decides
+    // between sending and logging on this key being truthy, so a host of `"  "`
+    // would build a transport that fails every send rather than fall back.
+    SMTP_HOST: smtpHost || undefined,
     SMTP_PORT: smtpPort,
     SMTP_USER: text(raw, 'SMTP_USER'),
     SMTP_PASSWORD: text(raw, 'SMTP_PASSWORD'),

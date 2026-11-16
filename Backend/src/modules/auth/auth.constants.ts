@@ -41,7 +41,11 @@ export const EXPIRED_ROW_SWEEP_MS = 60 * 60 * 24 * 1000;
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 
-/** Trying a password: five a minute per address, then refused for the minute. */
+/**
+ * Trying a password: five a minute, then refused for the minute. Counted per
+ * address *and* account — the tracker is in `app.module.ts`, where this becomes
+ * the `sign-in` throttler, because a campus shares one public address.
+ */
 export const SIGN_IN_THROTTLE = { limit: 5, ttl: MINUTE };
 
 /** Mailing a link: five an hour — an hour because the thing being spent is an inbox. */

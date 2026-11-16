@@ -7,7 +7,6 @@ coverage/
 *.log
 distribute.md
 Instruction.md
-Readme.md
 src/modules/admin
 src/modules/inquiries
 src/modules/listings
@@ -18,3 +17,4 @@ src/modules/users
 test
 .DS_Store
 CHANGELOG.md
+README.md

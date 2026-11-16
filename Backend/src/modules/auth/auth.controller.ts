@@ -6,7 +6,7 @@ import { AuthService } from './auth.service';
 import { AllowSuspended, Public } from '../../common/decorators/auth.decorators';
 import type { AuthUser } from './session.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { MAIL_THROTTLE, SIGN_IN_THROTTLE, TOKEN_THROTTLE } from './auth.constants';
+import { MAIL_THROTTLE, TOKEN_THROTTLE } from './auth.constants';
 import { ChangePasswordDto,CompleteRegistrationDto,ForgotPasswordDto,ResetPasswordDto,SignInDto,SignUpDto,} from './dto/auth.dto';
 
 /**
@@ -53,9 +53,17 @@ export class AuthController {
     return this.auth.completeRegistration(body, req, res);
   }
 
+  /**
+   * The tight budget on this route is the `sign-in` throttler declared in
+   * `app.module.ts`, which counts an address *and* the account in its body —
+   * five a minute each, so a class signing in behind one campus address no
+   * longer spends the whole minute. It is not a route override because the
+   * route also keeps the coarse per-address `default` limit: every attempt
+   * against an existing account costs this process a scrypt hash, and an
+   * attacker with one address must not be able to ask for unlimited of them.
+   */
   @Public()
   @HttpCode(200)
-  @Throttle({ default: SIGN_IN_THROTTLE })
   @Post('sign-in')
   @ApiOperation({ summary: 'Sign in and start a session' })
   signIn(@Body() body: SignInDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {

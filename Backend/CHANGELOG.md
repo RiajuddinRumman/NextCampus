@@ -13,6 +13,134 @@ belongs here instead.
 
 ---
 
+## 2026-11-16 — five ways a rule stopped at the edge of its own file
+
+The same six findings read twice: once for whether the rule exists, once for
+whether it holds on every road to the row. A `PATCH` that wrote columns nobody
+mentioned, a boot that logged a live reset link, a limit that counted the whole
+campus as one student, a ceiling that guarded creation and not the way back in,
+an un-hide that undid a suspension, and one `.gitignore` line. Every one of them
+was true in the method that owned the field and missing in the one beside it.
+
+### The profile patch wrote every column of the document
+
+`PATCH /api/users/me` used to build `headline`, `about` and `interests` into one
+object with `?? null` in each slot, so a student who asked to change their
+headline also
+deleted the about text they wrote last term: an omitted field arrived as
+`undefined`, became `null`, and `null` on this route means "clear it" — the same
+rule that makes `{"price":null}` remove an asking price. The values are built key
+by key now, the way the account half of the same request already was, and a body
+that names none of the three leaves the `profiles` row alone. Nothing about the
+documented rule changed; only the code disagreed with it.
+
+### Production refuses to boot without a mail server
+
+`SMTP_HOST` empty is the documented way to run with no SMTP (§5 of the README):
+the mailer writes each message, and every link inside it, to stdout, and the e2e
+suite reads its tokens out of that log. Under `NODE_ENV=production` that same
+branch put a live password-reset link — which is a session in another person's
+mailbox — into a file that gets collected, shipped and retained. `loadEnv()` now
+adds `SMTP_HOST: required in production, so reset links are mailed rather than
+logged` to the problems list, and the process exits 1 beside the settings it
+already refused. An empty host **or a whitespace-only one** is the missing host:
+the value is trimmed on the way out, so `SMTP_HOST=" "` cannot slip past the gate
+and then build a transport on two spaces.
+
+### Sign-in counts the account as well as the address
+
+Five sign-ins a minute per client address is the right shape for one person
+guessing one password and the wrong shape for a campus: the dorms leave through
+one public address, so the fifth mistyped password of the afternoon locked out
+everybody who signed in after them — an accident that looks exactly like the
+attack the limit is for. The `sign-in` budget is a second, _named_ throttler in
+`app.module.ts` now, keyed by `signInBucket()` on **address + lower-cased e-mail**
+(a request that names no account falls back to the address, so junk still costs
+its sender what it always did). It is declared there rather than as a route-level
+`@Throttle({ default: … })` because the latter *replaces* the baseline for that
+route: the coarse 120 a minute per address has to stay underneath, since every
+attempt against an existing account costs this process a scrypt hash.
+
+Two consequences, both accepted. **The count is per account, so an attacker who
+sprays 100 accounts from one address now gets 500 tries a minute rather than 5** —
+which is what the per-address baseline, and `TRUST_PROXY_HOPS` set correctly for
+the host, are there to bound. And the mail routes deliberately keep counting per
+address: what is scarce there is this platform's own hourly sending quota, which
+one NAT genuinely does share, so a per-account key would let a hundred students
+ask for a hundred links against a budget meant to be one.
+
+### The 50-listing ceiling now counts the road back in
+
+`MAX_ACTIVE_LISTINGS` guarded `create()` only, so posting 51 listings was refused
+while closing 50 and reopening them one by one was not — the ceiling was on the
+insert, not on the state. The lock-and-count moved into
+`ensureRoomForActiveListing()`, which `setStatus()` calls when the target status is
+`ACTIVE`: the same `pessimistic_write` lock on the owner's `users` row (so a create
+and a reopen race, and they serialise in the same order `create()` and
+`suspendUser()` already use), the same count, the same `403 LISTING_LIMIT`. It
+excludes the listing being reopened, so `?status=ACTIVE` on a row that is already
+`ACTIVE` stays the no-op it was instead of refusing a state the account is already
+in. **A route that never answered `LISTING_LIMIT` can now answer it**:
+`PATCH /api/listings/{id}/status?status=ACTIVE`.
+
+### Un-hiding is refused while the owner is suspended
+
+`ModerationService.unhideListing()` wrote `HIDDEN → ACTIVE` without looking at who
+owned the row, so the one listing a moderator hid before a suspension landed — or
+any hidden post of an account that was pulled down since — went back into the
+search results with an owner who is not allowed to answer the inquiries it brings.
+The transaction now reads the owner under `pessimistic_write`, which is the row
+`suspendUser()` updates, and answers `403 OWNER_SUSPENDED` — the new code, and the
+only new one here — before the listing write, the audit row and the notification.
+Suspend-versus-un-hide is decided by the database: whichever arrives second either
+waits for the other or is refused. `restoreUser()` still leaves the listings
+hidden, so the order for a suspension that turns out to have been wrong is
+restore, then decide listing by listing.
+
+### The `.gitignore` line that hid every README
+
+`Readme.md` was in the ignore list, and git on macOS matches case-insensitively, so
+it was also `README.md`: the manual for this repository, and each module's own, were
+invisible to `git status` and silently absent from every commit. The line is gone.
+**The rest of the file still excludes `src/modules/{admin,inquiries,listings,
+moderation,notifications,reports,users}`, `test/` and `CHANGELOG.md`** — which is
+where most of what changed this week lives, so those rules are an operator decision
+to make deliberately, not something to notice after a commit that quietly contained
+half the work.
+
+### Four findings this round deliberately left alone
+
+`warnUser()` writes its audit row and its notification without a transaction (both
+are writes that can only be observed by somebody who can also read the trail); two
+`PATCH /api/users/me` requests sent at the same moment can both try to create the
+`profiles` row and one answers `500`; images uploaded and never attached to a
+listing stay in Cloudinary; and the upload quota is an in-memory per-process map
+that is never cleared. All four are real, all four are cheap to live with at one
+server, and all four are the kind of fix that wants a decision about what the
+storage should be rather than five more lines.
+
+### Docs
+
+`README.md` §2.2 and §3 (production's fourth required setting, `SMTP_HOST`; the
+operator note on `TRUST_PROXY_HOPS`), §5.5, §6 (the two-key sign-in budget and why
+the mail routes differ), §7.1, §7.3 (un-hide while suspended), §7.5 (the ceiling on
+both roads), §10 and §12; `.env.example`; `Instruction.md` rule 4 (68 codes) and
+rule 9, the two new §5.A rows and the corrected production-boot note, §5.B/§5.C/§5.D
+rows, §6, the footer; `distribute.md` §A/§B/§C and the count lines; `test/README.md`.
+
+### Tests
+
+- e2e: 106 → 110. A profile patch that leaves the rest of the document readable; a
+  suspended owner's listing refused at the un-hide with nothing written and nothing
+  in the trail, then un-hidden after the restore with one notification; fifty posts,
+  the fifty-first refused, close them all, and a reopen refused too until one of the
+  new ones is closed; five refused sign-ins for one account from one address and a
+  successful one for a different account from the same address, plus the upper-case
+  e-mail that spends the same budget.
+- unit: 76 → 78. `SMTP_HOST` required in production and only there, and a
+  whitespace-only host treated as no host at all. The three existing modes keep a
+  host so they still test the mode rather than the gate.
+
 ## 2026-11-16 — a suspension that reaches the listings, and six smaller things
 
 Seven findings from the same kind of read: what happens when two people press the

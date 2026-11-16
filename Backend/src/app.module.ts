@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import type { ExecutionContext } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
@@ -6,6 +7,8 @@ import { loadEnv } from './config/env';
 import { DatabaseModule } from './providers/database/postgres/database.module';
 import { MailModule } from './modules/mail/mail.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { AuthController } from './modules/auth/auth.controller';
+import { SIGN_IN_THROTTLE } from './modules/auth/auth.constants';
 import { UsersModule } from './modules/users/users.module';
 import { ListingsModule } from './modules/listings/listings.module';
 import { InquiriesModule } from './modules/inquiries/inquiries.module';
@@ -19,6 +22,27 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { ResponseEnvelopeInterceptor } from './common/interceptors/response-envelope.interceptor';
 import { SessionGuard } from './common/guards/session.guard';
 import { AuthzGuard } from './common/guards/authz.guard';
+
+/**
+ * Whose sign-in budget a request spends: this address, asking about this account.
+ *
+ * The address is `req.ip`, which belongs to the student only if `TRUST_PROXY_HOPS`
+ * says how many proxies stand in front of this process (see `main.ts`). Behind a
+ * host that forwards and a deployment that left the setting at `0`, the whole
+ * campus is one bucket to every limit here — including this one.
+ *
+ * A body that names no account — the malformed requests, which the guard sees
+ * before the validation pipe does — falls back to the address alone, so junk costs
+ * its sender exactly the budget it always did. The address is not IPv6-collapsed
+ * the way the guard collapses it for the baseline context; the coarse per-address
+ * limit below is what a caller holding a block of addresses still has to fit in.
+ */
+function signInBucket(req: Record<string, unknown>): string {
+  const ip = typeof req.ip === 'string' ? req.ip : 'unknown-address';
+  const body = req.body as { email?: unknown } | undefined;
+  const claimed = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
+  return claimed ? `${ip}|${claimed}` : ip;
+}
 
 /**
  * The application's wiring, and the only place the cross-cutting rules are
@@ -61,6 +85,27 @@ import { AuthzGuard } from './common/guards/authz.guard';
         {
           ttl: config.get<number>('THROTTLE_TTL_MS', 60_000),
           limit: config.get<number>('THROTTLE_LIMIT', 120),
+        },
+        // A second, tighter budget for one route: five sign-in attempts a minute
+        // for an address *and* the account its body names. Per address alone —
+        // what the baseline above counts — is the wrong unit for a login, because
+        // a campus puts a class of students behind one public address and the
+        // fifth mistyped password refuses the sixth person. Per account alone is
+        // wrong the other way: one caller would get five tries against every
+        // account on the platform each minute, and a try against an account that
+        // exists costs this process a scrypt hash.
+        //
+        // Declared here rather than as `@Throttle` on the route because a route
+        // override replaces the `default` context for that route — which would
+        // drop the coarse per-address bound the comment above is about — and
+        // `skipIf` keeps this one off every route that has no password to try.
+        {
+          name: 'sign-in',
+          ttl: SIGN_IN_THROTTLE.ttl,
+          limit: SIGN_IN_THROTTLE.limit,
+          getTracker: signInBucket,
+          skipIf: (context: ExecutionContext) =>
+            context.getHandler() !== AuthController.prototype.signIn,
         },
       ],
     }),
