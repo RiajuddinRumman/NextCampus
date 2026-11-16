@@ -13,7 +13,6 @@ src/modules/listings
 src/modules/mail
 src/modules/media
 src/modules/notifications
-src/modules/reports
 src/modules/users
 test
 .DS_Store
